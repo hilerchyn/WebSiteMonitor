@@ -3,14 +3,17 @@ package main
 import (
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"os/exec"
 	"syscall"
 	"time"
+	_ "bytes"
 
 	"github.com/takama/daemon"
+	"strings"
+
+	_ "strconv"
 )
 
 const (
@@ -28,7 +31,6 @@ type Service struct {
 	daemon.Daemon
 }
 
-var MonitorPanic = false
 
 // Manage by daemon commands or run the daemon
 func (service *Service) Manage() (string, error) {
@@ -62,17 +64,17 @@ func (service *Service) Manage() (string, error) {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt, os.Kill, syscall.SIGTERM)
 
-	go monitor()
+	MonitorPanic := make(chan bool, 1)
+	go monitor(MonitorPanic)
 
 	// loop work cycle with accept connections or interrupt
 	// by system signal
 	for {
 
-		if MonitorPanic {
-			go monitor()
-		}
 
 		select {
+		case <-MonitorPanic:
+			go monitor(MonitorPanic)
 		case killSignal := <-interrupt:
 			log.Println("Got signal:", killSignal)
 			if killSignal == os.Interrupt {
@@ -86,14 +88,19 @@ func (service *Service) Manage() (string, error) {
 	return usage, nil
 }
 
-func monitor(){
-	timer_heartbeat := time.NewTicker(5 * time.Second)
+func monitor(MonitorPanic chan bool){
+	timer_heartbeat := time.NewTicker(2 * time.Second)
+	var cmd_biz *exec.Cmd
+	var cmd_order *exec.Cmd
+
+	var pid_biz int
+	var pid_order int
 
 	defer func() {     //declear defer to capture panic expetion
 		//fmt.Println("c")
 		if err := recover(); err != nil {
 			log.Println("[NetworkMonitoer]network monitor panic:",err)    //show panic error
-			MonitorPanic = true
+			MonitorPanic <- true
 		}
 
 		timer_heartbeat.Stop()
@@ -108,33 +115,57 @@ func monitor(){
 			//case <- time.After(time.Second*5):
 			//	println("read channel timeout")
 		case <-timer_heartbeat.C:
-			conn, err := net.Dial("tcp", "smart.haierlife.cn:80")
 
 			log.Println("contact: ChenTao; Tel: 15954803856; Mail: hilerchyn@gmail.com")
+			//log.Println(os.Getwd())
+			os.Chdir("/root/printer_upload")
+			//log.Println(os.Getwd())
 
-			if err != nil {
-				// handle error
+			look, _:=exec.LookPath("/bin/")
+			log.Println(look)
 
-				log.Println("[NetworkMonitor] connect to failed:", err)
+			cmd := exec.Command("ps", "aux")
+			out, _ := cmd.Output()
+			result := string(out);
+			//log.Println(result)
 
-				if _, err = os.Stat("/opt/lampp/lampp"); err != nil {
+			count_biz := strings.Count(result, "biz-server")
+			log.Println("count:",count_biz)
+			if count_biz <=0 {
+				//look, _:=exec.LookPath("/usr/bin/")
+				//log.Println(look)
+				cmd_biz= exec.Command("/usr/bin/nohup","/root/printer_upload/biz-server")
+				cmd_biz.Start()
+				log.Println(cmd_biz.Process.Pid)
+				pid_biz = cmd_biz.Process.Pid
+			}
 
-				} else {
-					cmd := exec.Command("/opt/lampp/lampp", "restart")
-					err := cmd.Start()
-					if err != nil {
-						log.Fatal(err)
-					}
-					log.Printf("Waiting for command to finish...")
-					err = cmd.Wait()
-					log.Printf("Command finished with error: %v", err)
-				}
+			count_biz_kill := strings.Count(result, "[biz-server]")
+			log.Println("count kill:",count_biz_kill)
+			if count_biz_kill >0 {
+				p, err := os.FindProcess(pid_biz)
+				p.Wait()
+				log.Println(err)
+			}
 
+			count_order := strings.Count(result, "order-server")
+			log.Println("count:",count_order)
+			if count_order <=0 {
+				//look, _:=exec.LookPath("/usr/bin/")
+				//log.Println(look)
+				cmd_order = exec.Command("/usr/bin/nohup","/root/printer_upload/order-server")
+				cmd_order.Start()
+				log.Println(cmd_order.Process.Pid)
+				pid_order = cmd_order.Process.Pid
+				//log.Println(err)
+			}
 
-				//continue
-			} else {
-				log.Println("[NetworkMonitor] success")
-				conn.Close()
+			count_order_kill := strings.Count(result, "[order-server]")
+			log.Println("count kill:",count_order_kill)
+			if count_order_kill >0 {
+				p, err := os.FindProcess(pid_order)
+				p.Wait()
+				log.Println(err)
 			}
 
 
